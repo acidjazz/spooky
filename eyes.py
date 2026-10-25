@@ -36,22 +36,21 @@ screen_w, screen_h = screen.get_size()
 pygame.mouse.set_visible(False)
 
 SLOT_CONFIGS = [
-    (0.50, 0.50, 1.05, "slit", 0.38),
-    (0.22, 0.20, 0.52, "round", 0.42),
-    (0.78, 0.22, 0.54, "slit", 0.34),
-    (0.24, 0.80, 0.50, "slit", 0.44),
-    (0.76, 0.78, 0.52, "round", 0.36),
+    (0.50, 0.50, 1.05, 0.40),
+    (0.22, 0.20, 0.52, 0.42),
+    (0.78, 0.22, 0.54, 0.36),
+    (0.24, 0.80, 0.50, 0.44),
+    (0.76, 0.78, 0.52, 0.38),
 ]
 
 class EyePair:
-    def __init__(self, idx, nx, ny, scale, style, slant):
+    def __init__(self, idx, nx, ny, scale, slant):
         self.idx = idx
         self.cx = int(screen_w * nx)
         self.cy = int(screen_h * ny)
         self.base_scale = scale
         self.scale = scale
         self.target_scale = scale
-        self.style = style
         self.slant = slant
         self.curr_x = 0.0
         self.curr_y = 0.0
@@ -111,7 +110,7 @@ class EyePair:
 
         self.scale += (self.target_scale - self.scale) * 0.1
         self.openness += (self.target_openness - self.openness) * 0.18
-        self.alert += (self.target_alert - self.alert) * 0.15
+        self.alert += (self.target_alert - self.alert) * 0.14
         self.curr_x += (self.target_x - self.curr_x) * 0.25
         self.curr_y += (self.target_y - self.curr_y) * 0.25
 
@@ -142,8 +141,8 @@ class EyePair:
         for side in (-1, 1):
             ex = self.cx + (side * spacing)
             ey = self.cy + bob_y
-            px = int(ex + self.curr_x * max_shift_x)
-            py = int(ey + self.curr_y * max_shift_y)
+            px = ex + self.curr_x * max_shift_x
+            py = ey + self.curr_y * max_shift_y
 
             steps = 10
             for i in range(steps):
@@ -153,27 +152,33 @@ class EyePair:
                 green = int(5 + 18 * ratio)
                 pygame.draw.circle(screen, (red, green, 12), (ex, ey), r)
 
-            if self.style == "round":
-                pinch = 1.0 - (0.35 * self.alert)
-                p_rad = max(6, int(eye_r * 0.42 * pinch))
-                pygame.draw.circle(screen, (0, 0, 0), (px, py), p_rad)
-            else:
-                pinch = 1.0 - (0.55 * self.alert)
-                slit_w = max(3, int(eye_r * 0.20 * pinch))
-                slit_h = int(eye_r * (0.76 + 0.08 * self.alert))
-                pts = [
-                    (px, py - slit_h),
-                    (px + slit_w, py - int(slit_h * 0.25)),
-                    (px + int(slit_w * 0.7), py + int(slit_h * 0.35)),
-                    (px, py + slit_h),
-                    (px - int(slit_w * 0.7), py + int(slit_h * 0.35)),
-                    (px - slit_w, py - int(slit_h * 0.25)),
-                ]
-                pygame.draw.polygon(screen, (0, 0, 0), pts)
+            pts = []
+            num_verts = 32
+            c_rad = eye_r * 0.42
+            s_w = eye_r * 0.13
+            s_h = eye_r * 0.82
+            for k in range(num_verts):
+                t = (k / float(num_verts)) * math.tau
+                u = math.sin(t)
+                c_val = math.cos(t)
+                sign_x = 1.0 if c_val >= 0.0 else -1.0
+
+                cw = abs(c_val) * c_rad
+                ch = u * c_rad
+
+                sw = (1.0 - (abs(u) ** 1.35)) * s_w
+                sh = u * s_h
+
+                vx = px + sign_x * (cw * (1.0 - self.alert) + sw * self.alert)
+                vy = py + (ch * (1.0 - self.alert) + sh * self.alert)
+                pts.append((int(vx), int(vy)))
+
+            pygame.draw.polygon(screen, (0, 0, 0), pts)
 
             close_amt = 1.0 - eff_open
             slant_dir = -side
-            tilt = eye_r * (self.slant + 0.06 * self.alert) * slant_dir
+            active_slant = self.slant * (0.45 + 0.70 * self.alert)
+            tilt = eye_r * active_slant * slant_dir
 
             base_top = ey - int(eye_r * 0.22)
             curr_top = base_top + int(eye_r * 1.15 * close_amt)
