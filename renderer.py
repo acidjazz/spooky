@@ -30,6 +30,11 @@ class EyePair:
         self.next_blink = time.time() + random.uniform(2.0, 6.0)
         self.next_saccade = time.time() + random.uniform(0.5, 2.0)
         self.breath_phase = random.uniform(0, math.tau)
+        self.glint_side = random.choice([-1.0, 1.0])
+        self.glint_u1 = random.uniform(-0.28, -0.08)
+        self.glint_u2 = self.glint_u1 + random.uniform(0.20, 0.30)
+        self.glint_r1 = random.uniform(0.09, 0.115)
+        self.glint_r2 = random.uniform(0.045, 0.062)
 
     def update(self, now, assigned_target, crowd_count, idle_mode):
         if assigned_target is not None:
@@ -138,17 +143,16 @@ class EyePair:
 
             pygame.draw.polygon(self.screen, (0, 0, 0), pts)
 
-            u1 = -0.36
-            edge_x1 = (math.sqrt(1.0 - u1 * u1) * c_rad) * (1.0 - self.alert) + ((1.0 - (abs(u1) ** 1.35)) * s_w) * self.alert
-            edge_y1 = u1 * (c_rad * (1.0 - self.alert) + s_h * self.alert)
-            r1 = max(3, int(eye_r * (0.105 - 0.025 * self.alert)))
-            pygame.draw.circle(self.screen, (255, 255, 255), (int(px + edge_x1), int(py + edge_y1)), r1)
-
-            u2 = -0.04
-            edge_x2 = (math.sqrt(1.0 - u2 * u2) * c_rad) * (1.0 - self.alert) + ((1.0 - (abs(u2) ** 1.35)) * s_w) * self.alert
-            edge_y2 = u2 * (c_rad * (1.0 - self.alert) + s_h * self.alert)
-            r2 = max(2, int(eye_r * (0.05 - 0.012 * self.alert)))
-            pygame.draw.circle(self.screen, (255, 255, 255), (int(px + edge_x2 + r2 * 0.5), int(py + edge_y2)), r2)
+            for u_base, r_fac in ((self.glint_u1, self.glint_r1), (self.glint_u2, self.glint_r2)):
+                dy = u_base * c_rad * (1.0 - 0.40 * self.alert)
+                cw = math.sqrt(max(0.0, c_rad * c_rad - dy * dy))
+                u_slit = min(1.0, abs(dy) / max(1.0, s_h))
+                sw = (1.0 - (u_slit ** 1.35)) * s_w
+                edge_x = cw * (1.0 - self.alert) + sw * self.alert
+                dot_r = max(3, int(eye_r * r_fac * (1.0 - 0.22 * self.alert)))
+                gx = int(px + self.glint_side * edge_x)
+                gy = int(py + dy)
+                pygame.draw.circle(self.screen, (255, 255, 255), (gx, gy), dot_r)
 
             close_amt = 1.0 - eff_open
             slant_dir = -side
