@@ -3,24 +3,26 @@ import os
 import random
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 import cv2
 import mediapipe as mp
 import pygame
 
-MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
-MODEL_PATH = os.path.join(tempfile.gettempdir(), "blaze_face_short_range.tflite")
+MODEL_URL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float32/1/efficientdet_lite2.tflite"
+MODEL_PATH = os.path.join(tempfile.gettempdir(), "efficientdet_lite2.tflite")
 
 if not os.path.exists(MODEL_PATH):
     urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
 base_options = mp.tasks.BaseOptions(model_asset_path=MODEL_PATH)
-options = mp.tasks.vision.FaceDetectorOptions(
+options = mp.tasks.vision.ObjectDetectorOptions(
     base_options=base_options,
-    min_detection_confidence=0.45,
+    score_threshold=0.28,
+    category_allowlist=["person"],
 )
-detector = mp.tasks.vision.FaceDetector.create_from_options(options)
+detector = mp.tasks.vision.ObjectDetector.create_from_options(options)
 
 pygame.init()
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
@@ -193,9 +195,67 @@ class EyePair:
             pygame.draw.circle(screen, (0, 0, 0), (ex, ey), eye_r + ring_thick, ring_thick)
 
 pairs = [EyePair(i, *cfg) for i, cfg in enumerate(SLOT_CONFIGS)]
-cap = cv2.VideoCapture(0)
-last_cam_retry = time.time()
-sensitivity = 1.65
+sensitivity = 1.4
+latest_targets = []
+running = True
+
+def open_camera():
+    c = cv2.VideoCapture(0)
+    if c.isOpened():
+        c.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        c.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    return c
+
+def vision_worker():
+    global latest_targets, running
+    cap = open_camera()
+    last_retry = time.time()
+    last_seen = 0.0
+
+    while running:
+        now = time.time()
+        if not cap.isOpened():
+            if now - last_retry > 3.0:
+                last_retry = now
+                cap = open_camera()
+            time.sleep(0.1)
+            continue
+
+        success, image = cap.read()
+        if not success or image is None:
+            cap.release()
+            continue
+
+        img_h, img_w = image.shape[:2]
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+        results = detector.detect(mp_image)
+
+        if results.detections:
+            sorted_dets = sorted(
+                results.detections,
+                key=lambda d: d.bounding_box.width * d.bounding_box.height,
+                reverse=True,
+            )
+            new_targets = []
+            for det in sorted_dets[: len(pairs)]:
+                bbox = det.bounding_box
+                fx = (bbox.origin_x + (bbox.width * 0.5)) / img_w
+                fy = (bbox.origin_y + (bbox.height * 0.22)) / img_h
+                nx = max(-1.0, min(1.0, (1.0 - (fx * 2.0)) * sensitivity))
+                ny = max(-1.0, min(1.0, ((fy * 2.0) - 1.0) * sensitivity))
+                new_targets.append((nx, ny))
+            latest_targets = new_targets
+            last_seen = now
+        elif now - last_seen > 0.6:
+            latest_targets = []
+
+    if cap.isOpened():
+        cap.release()
+
+worker = threading.Thread(target=vision_worker, daemon=True)
+worker.start()
+
 clock = pygame.time.Clock()
 
 try:
@@ -205,35 +265,7 @@ try:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 raise KeyboardInterrupt
 
-        targets = []
-        if not cap.isOpened():
-            if now - last_cam_retry > 3.0:
-                last_cam_retry = now
-                cap.open(0)
-        else:
-            success, image = cap.read()
-            if not success or image is None:
-                cap.release()
-            else:
-                img_h, img_w = image.shape[:2]
-                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
-                results = detector.detect(mp_image)
-
-                if results.detections:
-                    sorted_dets = sorted(
-                        results.detections,
-                        key=lambda d: d.bounding_box.width * d.bounding_box.height,
-                        reverse=True,
-                    )
-                    for det in sorted_dets[: len(pairs)]:
-                        bbox = det.bounding_box
-                        fx = (bbox.origin_x + (bbox.width / 2.0)) / img_w
-                        fy = (bbox.origin_y + (bbox.height / 2.0)) / img_h
-                        nx = max(-1.0, min(1.0, (1.0 - (fx * 2.0)) * sensitivity))
-                        ny = max(-1.0, min(1.0, ((fy * 2.0) - 1.0) * sensitivity))
-                        targets.append((nx, ny))
-
+        targets = list(latest_targets)
         screen.fill((0, 0, 0))
         idle_mode = len(targets) == 0
         active_crowd = len(targets) if not idle_mode else 1 + sum(1 for p in pairs[1:] if p.openness > 0.2)
@@ -246,7 +278,8 @@ try:
         clock.tick(60)
 
 except KeyboardInterrupt:
-    cap.release()
+    running = False
+    worker.join(timeout=1.0)
     detector.close()
     pygame.quit()
     sys.exit()
