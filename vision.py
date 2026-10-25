@@ -12,12 +12,13 @@ MODEL_PATH = os.path.join(tempfile.gettempdir(), "efficientdet_lite2.tflite")
 
 
 class VisionTracker:
-    def __init__(self, max_targets=5, mirror_x=False, solo_test=False, sensitivity=1.4, y_offset=0.22, port=8080):
+    def __init__(self, max_targets=5, mirror_x=False, solo_test=False, sensitivity=1.4, y_offset=0.22, min_score=0.40, port=8080):
         self.max_targets = max_targets
         self.mirror_x = mirror_x
         self.solo_test = solo_test
         self.sensitivity = sensitivity
         self.y_offset = y_offset
+        self.min_score = min_score
         self.port = port
         self.latest_targets = []
         self.latest_jpeg = None
@@ -29,7 +30,7 @@ class VisionTracker:
         base_options = mp.tasks.BaseOptions(model_asset_path=MODEL_PATH)
         options = mp.tasks.vision.ObjectDetectorOptions(
             base_options=base_options,
-            score_threshold=0.28,
+            score_threshold=0.20,
             category_allowlist=["person"],
         )
         self.detector = mp.tasks.vision.ObjectDetector.create_from_options(options)
@@ -61,14 +62,14 @@ class VisionTracker:
                 return
 
             def do_GET(self):
-                if self.path == "/flip":
-                    tracker.mirror_x = not tracker.mirror_x
+                if self.path == "/down":
+                    tracker.min_score = round(max(0.20, tracker.min_score - 0.05), 2)
                     self.send_response(302)
                     self.send_header("Location", "/")
                     self.end_headers()
                     return
-                if self.path == "/solo":
-                    tracker.solo_test = not tracker.solo_test
+                if self.path == "/up":
+                    tracker.min_score = round(min(0.85, tracker.min_score + 0.05), 2)
                     self.send_response(302)
                     self.send_header("Location", "/")
                     self.end_headers()
@@ -93,17 +94,17 @@ class VisionTracker:
                     except Exception:
                         pass
                 else:
-                    m_state = "ON" if tracker.mirror_x else "OFF"
-                    s_state = "ON" if tracker.solo_test else "OFF"
+                    pct = int(round(tracker.min_score * 100))
                     html = (
                         f"<html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'>"
                         f"<title>SpookySpy Aim</title></head>"
                         f"<body style='margin:0;background:black;color:red;font-family:sans-serif;text-align:center;'>"
                         f"<h3 style='margin:10px;'>SpookySpy Live Aiming View</h3>"
                         f"<img src='/stream' style='width:100%;max-width:960px;border:2px solid red;'/>"
-                        f"<div style='margin:14px;'>"
-                        f"<a href='/flip' style='color:white;background:darkred;padding:10px 16px;text-decoration:none;border-radius:6px;margin:6px;display:inline-block;'>Flip Left/Right ({m_state})</a>"
-                        f"<a href='/solo' style='color:white;background:darkred;padding:10px 16px;text-decoration:none;border-radius:6px;margin:6px;display:inline-block;'>3-Eye Crowd Test ({s_state})</a>"
+                        f"<div style='margin:14px;color:white;font-size:16px;'>"
+                        f"<div style='margin-bottom:8px;'>AI Confidence Cutoff: <b>{pct}%</b></div>"
+                        f"<a href='/down' style='color:white;background:darkred;padding:10px 16px;text-decoration:none;border-radius:6px;margin:6px;display:inline-block;'>-5% (More Sensitive)</a>"
+                        f"<a href='/up' style='color:white;background:darkred;padding:10px 16px;text-decoration:none;border-radius:6px;margin:6px;display:inline-block;'>+5% (Ignore Trees)</a>"
                         f"</div></body></html>"
                     ).encode("utf-8")
                     self.send_response(200)
@@ -143,16 +144,21 @@ class VisionTracker:
             results = self.detector.detect(mp_image)
 
             debug_frame = cv2.flip(image, 1)
+            valid_dets = [
+                d for d in (results.detections or [])
+                if d.categories and d.categories[0].score >= self.min_score
+            ]
 
-            if results.detections:
+            if valid_dets:
                 sorted_dets = sorted(
-                    results.detections,
+                    valid_dets,
                     key=lambda d: d.bounding_box.width * d.bounding_box.height,
                     reverse=True,
                 )
                 new_targets = []
                 for det in sorted_dets[: self.max_targets]:
                     bbox = det.bounding_box
+                    score_pct = int(round(det.categories[0].score * 100))
                     fx = (bbox.origin_x + (bbox.width * 0.5)) / img_w
                     fy = (bbox.origin_y + (bbox.height * 0.22)) / img_h
 
@@ -161,6 +167,15 @@ class VisionTracker:
                     dy1, dy2 = int(bbox.origin_y), int(bbox.origin_y + bbox.height)
                     cv2.rectangle(debug_frame, (dx1, dy1), (dx2, dy2), (0, 0, 255), 3)
                     cv2.circle(debug_frame, (int((1.0 - fx) * img_w), int(fy * img_h)), 8, (0, 255, 0), -1)
+                    cv2.putText(
+                        debug_frame,
+                        f"{score_pct}%",
+                        (dx1, max(24, dy1 - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 255, 0),
+                        2,
+                    )
 
                     raw_x = (1.0 - (fx * 2.0)) if self.mirror_x else ((fx * 2.0) - 1.0)
                     raw_y = ((fy + self.y_offset) * 2.0) - 1.0
