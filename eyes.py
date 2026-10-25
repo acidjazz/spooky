@@ -4,17 +4,18 @@ import pygame
 from renderer import EyePair, match_sticky_targets
 from vision import VisionTracker
 
-MIRROR_X = True
+MIRROR_X = False
 SOLO_CROWD_TEST = False
 SENSITIVITY = 1.4
+Y_OFFSET = 0.22
 STREAM_PORT = 8080
 
 SLOT_CONFIGS = [
-    (0.50, 0.50, 1.05, 0.40),
-    (0.22, 0.20, 0.52, 0.42),
-    (0.78, 0.22, 0.54, 0.36),
-    (0.24, 0.80, 0.50, 0.44),
-    (0.76, 0.78, 0.52, 0.38),
+    (0.50, 0.44, 1.05, 0.40),
+    (0.23, 0.22, 0.52, 0.42),
+    (0.77, 0.22, 0.54, 0.36),
+    (0.24, 0.70, 0.50, 0.44),
+    (0.76, 0.70, 0.52, 0.38),
 ]
 
 pygame.init()
@@ -27,6 +28,7 @@ vision = VisionTracker(
     mirror_x=MIRROR_X,
     solo_test=SOLO_CROWD_TEST,
     sensitivity=SENSITIVITY,
+    y_offset=Y_OFFSET,
     port=STREAM_PORT,
 )
 
