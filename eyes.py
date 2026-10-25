@@ -77,7 +77,7 @@ try:
             pupil_radius,
         )
 
-        pygame.draw.circle(screen, (255, 255, 255), right_eye_center, eye_radius)
+        pygame.draw.circle(screen, (255, 0, 0), right_eye_center, eye_radius)
         pygame.draw.circle(
             screen,
             (0, 0, 0),
