@@ -1,3 +1,4 @@
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import math
 import os
 import random
@@ -13,6 +14,7 @@ import pygame
 MIRROR_X = True
 SOLO_CROWD_TEST = False
 SENSITIVITY = 1.4
+STREAM_PORT = 8080
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float32/1/efficientdet_lite2.tflite"
 MODEL_PATH = os.path.join(tempfile.gettempdir(), "efficientdet_lite2.tflite")
@@ -65,6 +67,7 @@ class EyePair:
         self.blink_dur = 0.16
         self.next_blink = time.time() + random.uniform(2.0, 6.0)
         self.next_saccade = time.time() + random.uniform(0.5, 2.0)
+        self.breath_phase = random.uniform(0, math.tau)
 
     def update(self, now, assigned_target, crowd_count, idle_mode):
         if assigned_target is not None:
@@ -127,17 +130,18 @@ class EyePair:
 
         effective_open = max(0.0, self.openness * (1.0 - blink_cut))
         if effective_open > 0.02:
-            self.draw(effective_open)
+            self.draw(effective_open, now)
 
-    def draw(self, eff_open):
+    def draw(self, eff_open, now):
         eye_r = int(screen_h * 0.19 * self.scale)
         spacing = int(eye_r * 1.35)
         max_shift_x = eye_r * 0.48
         max_shift_y = eye_r * 0.32
+        bob_y = int(math.sin(now * 2.2 + self.breath_phase) * (eye_r * 0.05))
 
         for side in (-1, 1):
             ex = self.cx + (side * spacing)
-            ey = self.cy
+            ey = self.cy + bob_y
             px = int(ex + self.curr_x * max_shift_x)
             py = int(ey + self.curr_y * max_shift_y)
 
@@ -145,19 +149,18 @@ class EyePair:
             for i in range(steps):
                 ratio = i / float(steps - 1)
                 r = int(eye_r * (1.0 - ratio * 0.25))
-                red = int(185 + 70 * ratio)
-                idle_green = 140 + 85 * ratio
-                track_green = 5 + 20 * ratio
-                green = int(idle_green * (1.0 - self.alert) + track_green * self.alert)
-                blue = int(15 * self.alert)
-                pygame.draw.circle(screen, (red, green, blue), (ex, ey), r)
+                red = int(165 + 90 * ratio)
+                green = int(5 + 18 * ratio)
+                pygame.draw.circle(screen, (red, green, 12), (ex, ey), r)
 
             if self.style == "round":
-                p_rad = int(eye_r * 0.42)
+                pinch = 1.0 - (0.35 * self.alert)
+                p_rad = max(6, int(eye_r * 0.42 * pinch))
                 pygame.draw.circle(screen, (0, 0, 0), (px, py), p_rad)
             else:
-                slit_w = max(6, int(eye_r * 0.18))
-                slit_h = int(eye_r * 0.78)
+                pinch = 1.0 - (0.55 * self.alert)
+                slit_w = max(3, int(eye_r * 0.20 * pinch))
+                slit_h = int(eye_r * (0.76 + 0.08 * self.alert))
                 pts = [
                     (px, py - slit_h),
                     (px + slit_w, py - int(slit_h * 0.25)),
@@ -170,7 +173,7 @@ class EyePair:
 
             close_amt = 1.0 - eff_open
             slant_dir = -side
-            tilt = eye_r * self.slant * slant_dir
+            tilt = eye_r * (self.slant + 0.06 * self.alert) * slant_dir
 
             base_top = ey - int(eye_r * 0.22)
             curr_top = base_top + int(eye_r * 1.15 * close_amt)
@@ -198,9 +201,82 @@ class EyePair:
             ring_thick = max(20, int(eye_r * 0.35))
             pygame.draw.circle(screen, (0, 0, 0), (ex, ey), eye_r + ring_thick, ring_thick)
 
+def match_sticky_targets(eye_pairs, raw_targets):
+    assigned = [None] * len(eye_pairs)
+    count = min(len(eye_pairs), len(raw_targets))
+    if count == 0:
+        return assigned
+
+    candidates = []
+    for p_idx in range(count):
+        p = eye_pairs[p_idx]
+        for t_idx in range(count):
+            tx, ty = raw_targets[t_idx]
+            dist = (p.curr_x - tx) ** 2 + (p.curr_y - ty) ** 2
+            candidates.append((dist, p_idx, t_idx))
+
+    candidates.sort(key=lambda item: item[0])
+    used_pairs = set()
+    used_targets = set()
+
+    for _, p_idx, t_idx in candidates:
+        if p_idx not in used_pairs and t_idx not in used_targets:
+            assigned[p_idx] = raw_targets[t_idx]
+            used_pairs.add(p_idx)
+            used_targets.add(t_idx)
+
+    return assigned
+
 pairs = [EyePair(i, *cfg) for i, cfg in enumerate(SLOT_CONFIGS)]
 latest_targets = []
+latest_jpeg = None
 running = True
+
+class CamHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+    def do_GET(self):
+        if self.path == "/stream":
+            self.send_response(200)
+            self.send_header("Age", "0")
+            self.send_header("Cache-Control", "no-cache, private")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.end_headers()
+            try:
+                while running:
+                    if latest_jpeg is not None:
+                        self.wfile.write(b"--frame\r\n")
+                        self.send_header("Content-Type", "image/jpeg")
+                        self.send_header("Content-Length", str(len(latest_jpeg)))
+                        self.end_headers()
+                        self.wfile.write(latest_jpeg)
+                        self.wfile.write(b"\r\n")
+                    time.sleep(0.08)
+            except Exception:
+                pass
+        else:
+            html = (
+                b"<html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'>"
+                b"<title>SpookySpy Aim</title></head>"
+                b"<body style='margin:0;background:black;color:red;font-family:sans-serif;text-align:center;'>"
+                b"<h3 style='margin:10px;'>SpookySpy Live Aiming View</h3>"
+                b"<img src='/stream' style='width:100%;max-width:960px;border:2px solid red;'/>"
+                b"</body></html>"
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(html)))
+            self.end_headers()
+            self.wfile.write(html)
+
+def start_server():
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", STREAM_PORT), CamHandler)
+        server.serve_forever()
+    except Exception:
+        pass
 
 def open_camera():
     c = cv2.VideoCapture(0)
@@ -210,7 +286,7 @@ def open_camera():
     return c
 
 def vision_worker():
-    global latest_targets, running
+    global latest_targets, latest_jpeg, running
     cap = open_camera()
     last_retry = time.time()
     last_seen = 0.0
@@ -234,6 +310,8 @@ def vision_worker():
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
         results = detector.detect(mp_image)
 
+        debug_frame = image.copy()
+
         if results.detections:
             sorted_dets = sorted(
                 results.detections,
@@ -243,12 +321,19 @@ def vision_worker():
             new_targets = []
             for det in sorted_dets[: len(pairs)]:
                 bbox = det.bounding_box
+                x1, y1 = int(bbox.origin_x), int(bbox.origin_y)
+                x2, y2 = int(bbox.origin_x + bbox.width), int(bbox.origin_y + bbox.height)
+                cv2.rectangle(debug_frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
+
                 fx = (bbox.origin_x + (bbox.width * 0.5)) / img_w
                 fy = (bbox.origin_y + (bbox.height * 0.22)) / img_h
+                cv2.circle(debug_frame, (int(fx * img_w), int(fy * img_h)), 8, (0, 255, 0), -1)
+
                 raw_x = (1.0 - (fx * 2.0)) if MIRROR_X else ((fx * 2.0) - 1.0)
                 nx = max(-1.0, min(1.0, raw_x * SENSITIVITY))
                 ny = max(-1.0, min(1.0, ((fy * 2.0) - 1.0) * SENSITIVITY))
                 new_targets.append((nx, ny))
+
             if SOLO_CROWD_TEST and len(new_targets) == 1:
                 bx, by = new_targets[0]
                 new_targets.extend([
@@ -260,9 +345,17 @@ def vision_worker():
         elif now - last_seen > 0.6:
             latest_targets = []
 
+        if MIRROR_X:
+            debug_frame = cv2.flip(debug_frame, 1)
+        preview = cv2.resize(debug_frame, (640, 360))
+        ok, buf = cv2.imencode(".jpg", preview, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        if ok:
+            latest_jpeg = buf.tobytes()
+
     if cap.isOpened():
         cap.release()
 
+threading.Thread(target=start_server, daemon=True).start()
 worker = threading.Thread(target=vision_worker, daemon=True)
 worker.start()
 
@@ -276,13 +369,14 @@ try:
                 raise KeyboardInterrupt
 
         targets = list(latest_targets)
+        assigned_list = match_sticky_targets(pairs, targets)
+
         screen.fill((0, 0, 0))
         idle_mode = len(targets) == 0
         active_crowd = len(targets) if not idle_mode else 1 + sum(1 for p in pairs[1:] if p.openness > 0.2)
 
         for i, pair in enumerate(pairs):
-            assigned = targets[i] if i < len(targets) else None
-            pair.update(now, assigned, active_crowd, idle_mode)
+            pair.update(now, assigned_list[i], active_crowd, idle_mode)
 
         pygame.display.flip()
         clock.tick(60)
