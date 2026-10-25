@@ -18,7 +18,7 @@ if not os.path.exists(MODEL_PATH):
 base_options = mp.tasks.BaseOptions(model_asset_path=MODEL_PATH)
 options = mp.tasks.vision.FaceDetectorOptions(
     base_options=base_options,
-    min_detection_confidence=0.5,
+    min_detection_confidence=0.45,
 )
 detector = mp.tasks.vision.FaceDetector.create_from_options(options)
 
@@ -27,102 +27,165 @@ screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 screen_w, screen_h = screen.get_size()
 pygame.mouse.set_visible(False)
 
-eye_radius = int(screen_h * 0.26)
-iris_radius = int(eye_radius * 0.48)
-base_pupil_radius = int(iris_radius * 0.52)
-max_travel = eye_radius - iris_radius - 8
+SLOT_CONFIGS = [
+    (0.50, 0.50, 1.05, "slit", 0.38),
+    (0.22, 0.20, 0.52, "round", 0.42),
+    (0.78, 0.22, 0.54, "slit", 0.34),
+    (0.24, 0.80, 0.50, "slit", 0.44),
+    (0.76, 0.78, 0.52, "round", 0.36),
+]
 
-left_eye_center = (int(screen_w * 0.32), int(screen_h * 0.5))
-right_eye_center = (int(screen_w * 0.68), int(screen_h * 0.5))
+class EyePair:
+    def __init__(self, idx, nx, ny, scale, style, slant):
+        self.idx = idx
+        self.cx = int(screen_w * nx)
+        self.cy = int(screen_h * ny)
+        self.base_scale = scale
+        self.scale = scale
+        self.target_scale = scale
+        self.style = style
+        self.slant = slant
+        self.curr_x = 0.0
+        self.curr_y = 0.0
+        self.target_x = 0.0
+        self.target_y = 0.0
+        self.openness = 1.0 if idx == 0 else 0.0
+        self.target_openness = 1.0 if idx == 0 else 0.0
+        self.last_active = time.time() if idx == 0 else 0.0
+        self.is_blinking = False
+        self.blink_start = 0.0
+        self.blink_dur = 0.16
+        self.next_blink = time.time() + random.uniform(2.0, 6.0)
+        self.next_saccade = time.time() + random.uniform(0.5, 2.0)
 
-random.seed(42)
-veins = []
-for _ in range(18):
-    angle = random.uniform(0, math.tau)
-    segs = []
-    curr_a = angle
-    for s in range(5):
-        curr_a += random.uniform(-0.18, 0.18)
-        segs.append(curr_a)
-    veins.append(segs)
+    def update(self, now, assigned_target, crowd_count, idle_mode):
+        if assigned_target is not None:
+            self.last_active = now
+            self.target_openness = 1.0
+            self.target_x, self.target_y = assigned_target
+        elif self.idx == 0:
+            self.target_openness = 1.0
+            if now >= self.next_saccade:
+                if random.random() < 0.25:
+                    self.target_x, self.target_y = 0.0, 0.0
+                else:
+                    ang = random.uniform(0, math.tau)
+                    mag = random.uniform(0.3, 0.95)
+                    self.target_x = math.cos(ang) * mag
+                    self.target_y = math.sin(ang) * mag * 0.6
+                self.next_saccade = now + random.uniform(0.6, 2.4)
+        else:
+            if idle_mode:
+                if self.target_openness < 0.5 and random.random() < 0.002:
+                    self.last_active = now + random.uniform(2.5, 5.0)
+                    self.target_openness = 1.0
+                if now < self.last_active:
+                    if now >= self.next_saccade:
+                        ang = random.uniform(0, math.tau)
+                        mag = random.uniform(0.2, 0.9)
+                        self.target_x = math.cos(ang) * mag
+                        self.target_y = math.sin(ang) * mag * 0.6
+                        self.next_saccade = now + random.uniform(0.5, 1.8)
+                else:
+                    self.target_openness = 0.0
+            else:
+                if now - self.last_active > 1.2:
+                    self.target_openness = 0.0
 
+        if self.idx == 0:
+            self.target_scale = 1.15 if crowd_count <= 1 else 0.88
+
+        self.scale += (self.target_scale - self.scale) * 0.1
+        self.openness += (self.target_openness - self.openness) * 0.18
+        self.curr_x += (self.target_x - self.curr_x) * 0.25
+        self.curr_y += (self.target_y - self.curr_y) * 0.25
+
+        if self.openness > 0.1 and not self.is_blinking and now >= self.next_blink:
+            self.is_blinking = True
+            self.blink_start = now
+
+        blink_cut = 0.0
+        if self.is_blinking:
+            el = now - self.blink_start
+            if el >= self.blink_dur:
+                self.is_blinking = False
+                self.next_blink = now + (0.12 if random.random() < 0.2 else random.uniform(2.5, 6.5))
+            else:
+                blink_cut = math.sin((el / self.blink_dur) * math.pi)
+
+        effective_open = max(0.0, self.openness * (1.0 - blink_cut))
+        if effective_open > 0.02:
+            self.draw(effective_open)
+
+    def draw(self, eff_open):
+        eye_r = int(screen_h * 0.19 * self.scale)
+        spacing = int(eye_r * 1.35)
+        max_shift_x = eye_r * 0.48
+        max_shift_y = eye_r * 0.32
+
+        for side in (-1, 1):
+            ex = self.cx + (side * spacing)
+            ey = self.cy
+            px = int(ex + self.curr_x * max_shift_x)
+            py = int(ey + self.curr_y * max_shift_y)
+
+            steps = 10
+            for i in range(steps):
+                ratio = i / float(steps - 1)
+                r = int(eye_r * (1.0 - ratio * 0.25))
+                red = int(175 + 80 * ratio)
+                green = int(10 + 25 * ratio)
+                pygame.draw.circle(screen, (red, green, 15), (ex, ey), r)
+
+            if self.style == "round":
+                p_rad = int(eye_r * 0.42)
+                pygame.draw.circle(screen, (0, 0, 0), (px, py), p_rad)
+            else:
+                slit_w = max(6, int(eye_r * 0.18))
+                slit_h = int(eye_r * 0.78)
+                pts = [
+                    (px, py - slit_h),
+                    (px + slit_w, py - int(slit_h * 0.25)),
+                    (px + int(slit_w * 0.7), py + int(slit_h * 0.35)),
+                    (px, py + slit_h),
+                    (px - int(slit_w * 0.7), py + int(slit_h * 0.35)),
+                    (px - slit_w, py - int(slit_h * 0.25)),
+                ]
+                pygame.draw.polygon(screen, (0, 0, 0), pts)
+
+            close_amt = 1.0 - eff_open
+            slant_dir = -side
+            tilt = eye_r * self.slant * slant_dir
+
+            base_top = ey - int(eye_r * 0.22)
+            curr_top = base_top + int(eye_r * 1.15 * close_amt)
+
+            upper_mask = [
+                (ex - eye_r - 15, ey - eye_r - 15),
+                (ex + eye_r + 15, ey - eye_r - 15),
+                (ex + eye_r + 15, int(curr_top + tilt)),
+                (ex - eye_r - 15, int(curr_top - tilt)),
+            ]
+            pygame.draw.polygon(screen, (0, 0, 0), upper_mask)
+
+            base_bot = ey + int(eye_r * 0.72)
+            curr_bot = base_bot - int(eye_r * 0.85 * close_amt)
+            bot_tilt = -tilt * 0.35
+
+            lower_mask = [
+                (ex - eye_r - 15, ey + eye_r + 15),
+                (ex + eye_r + 15, ey + eye_r + 15),
+                (ex + eye_r + 15, int(curr_bot + bot_tilt)),
+                (ex - eye_r - 15, int(curr_bot - bot_tilt)),
+            ]
+            pygame.draw.polygon(screen, (0, 0, 0), lower_mask)
+
+            ring_thick = max(20, int(eye_r * 0.35))
+            pygame.draw.circle(screen, (0, 0, 0), (ex, ey), eye_r + ring_thick, ring_thick)
+
+pairs = [EyePair(i, *cfg) for i, cfg in enumerate(SLOT_CONFIGS)]
 cap = cv2.VideoCapture(0)
-
-sensitivity = 1.5
-current_x, current_y = 0.0, 0.0
-target_x, target_y = 0.0, 0.0
-
-next_saccade_time = time.time() + 1.0
-next_blink_time = time.time() + random.uniform(2.0, 5.0)
-blink_start = 0.0
-blink_duration = 0.18
-is_blinking = False
-
-pupil_scale = 1.0
-target_pupil_scale = 1.0
-squint_amount = 0.15
-target_squint = 0.15
-
-def draw_eye(center, offset_x, offset_y, is_left, blink_progress, squint, p_scale):
-    cx, cy = center
-    ix = int(cx + offset_x)
-    iy = int(cy + offset_y)
-
-    for i in range(15):
-        ratio = i / 14.0
-        r = int(eye_radius * (1.0 - ratio * 0.18))
-        val = int(140 + 110 * ratio)
-        pygame.draw.circle(screen, (val, val - 10, val - 15), (cx, cy), r)
-
-    for segs in veins:
-        pts = []
-        for idx, a in enumerate(segs):
-            dist_ratio = 1.0 - (idx * 0.12)
-            r = eye_radius * dist_ratio
-            px = cx + math.cos(a) * r + (offset_x * (1.0 - dist_ratio) * 0.5)
-            py = cy + math.sin(a) * r + (offset_y * (1.0 - dist_ratio) * 0.5)
-            pts.append((int(px), int(py)))
-        pygame.draw.lines(screen, (190, 40, 40), False, pts, 2)
-
-    pygame.draw.circle(screen, (60, 0, 0), (ix, iy), iris_radius + 3)
-    for i in range(12):
-        ratio = i / 11.0
-        r = int(iris_radius * (1.0 - ratio * 0.45))
-        red = int(180 + 75 * ratio)
-        green = int(20 + 140 * (ratio ** 2))
-        pygame.draw.circle(screen, (red, green, 0), (ix, iy), r)
-
-    p_rad = int(base_pupil_radius * p_scale)
-    pygame.draw.circle(screen, (0, 0, 0), (ix, iy), p_rad)
-
-    glint_x = ix - int(iris_radius * 0.28)
-    glint_y = iy - int(iris_radius * 0.28)
-    pygame.draw.circle(screen, (255, 255, 255), (glint_x, glint_y), max(4, int(eye_radius * 0.06)))
-    pygame.draw.circle(screen, (255, 220, 200), (ix + int(iris_radius * 0.22), iy + int(iris_radius * 0.22)), max(2, int(eye_radius * 0.025)))
-
-    close_factor = max(squint, blink_progress)
-    top_y = (cy - eye_radius) + (eye_radius * 1.35 * close_factor)
-    tilt = eye_radius * 0.32 * (1 if is_left else -1)
-
-    upper_lid = [
-        (cx - eye_radius - 20, cy - eye_radius - 20),
-        (cx + eye_radius + 20, cy - eye_radius - 20),
-        (cx + eye_radius + 20, int(top_y + tilt)),
-        (cx - eye_radius - 20, int(top_y - tilt)),
-    ]
-    pygame.draw.polygon(screen, (0, 0, 0), upper_lid)
-
-    bot_y = (cy + eye_radius) - (eye_radius * 0.75 * close_factor)
-    lower_lid = [
-        (cx - eye_radius - 20, cy + eye_radius + 20),
-        (cx + eye_radius + 20, cy + eye_radius + 20),
-        (cx + eye_radius + 20, int(bot_y)),
-        (cx - eye_radius - 20, int(bot_y)),
-    ]
-    pygame.draw.polygon(screen, (0, 0, 0), lower_lid)
-
-    pygame.draw.circle(screen, (0, 0, 0), (cx, cy), eye_radius + 40, 40)
-
+sensitivity = 1.65
 clock = pygame.time.Clock()
 
 try:
@@ -132,7 +195,7 @@ try:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 raise KeyboardInterrupt
 
-        face_found = False
+        targets = []
         if cap.isOpened():
             success, image = cap.read()
             if success and image is not None:
@@ -142,57 +205,26 @@ try:
                 results = detector.detect(mp_image)
 
                 if results.detections:
-                    face_found = True
-                    bbox = results.detections[0].bounding_box
-                    face_x = (bbox.origin_x + (bbox.width / 2.0)) / img_w
-                    face_y = (bbox.origin_y + (bbox.height / 2.0)) / img_h
-
-                    norm_x = 1.0 - (face_x * 2.0)
-                    norm_y = (face_y * 2.0) - 1.0
-
-                    target_x = max(-max_travel, min(max_travel, norm_x * max_travel * sensitivity))
-                    target_y = max(-max_travel, min(max_travel, norm_y * max_travel * sensitivity))
-                    target_pupil_scale = 1.25
-                    target_squint = 0.22
-
-        if not face_found:
-            if now >= next_saccade_time:
-                if random.random() < 0.25:
-                    target_x, target_y = 0.0, 0.0
-                else:
-                    angle = random.uniform(0, math.tau)
-                    dist = random.uniform(0.2, 0.95) * max_travel
-                    target_x = math.cos(angle) * dist
-                    target_y = math.sin(angle) * dist * 0.6
-                target_pupil_scale = random.uniform(0.75, 1.3)
-                target_squint = random.uniform(0.05, 0.3)
-                next_saccade_time = now + random.uniform(0.4, 2.6)
-
-        if not is_blinking and now >= next_blink_time:
-            is_blinking = True
-            blink_start = now
-
-        blink_val = 0.0
-        if is_blinking:
-            elapsed = now - blink_start
-            if elapsed >= blink_duration:
-                is_blinking = False
-                if random.random() < 0.25:
-                    next_blink_time = now + 0.08
-                else:
-                    next_blink_time = now + random.uniform(2.5, 6.5)
-            else:
-                blink_val = math.sin((elapsed / blink_duration) * math.pi)
-
-        current_x += (target_x - current_x) * 0.22
-        current_y += (target_y - current_y) * 0.22
-        pupil_scale += (target_pupil_scale - pupil_scale) * 0.1
-        squint_amount += (target_squint - squint_amount) * 0.1
+                    sorted_dets = sorted(
+                        results.detections,
+                        key=lambda d: d.bounding_box.width * d.bounding_box.height,
+                        reverse=True,
+                    )
+                    for det in sorted_dets[: len(pairs)]:
+                        bbox = det.bounding_box
+                        fx = (bbox.origin_x + (bbox.width / 2.0)) / img_w
+                        fy = (bbox.origin_y + (bbox.height / 2.0)) / img_h
+                        nx = max(-1.0, min(1.0, (1.0 - (fx * 2.0)) * sensitivity))
+                        ny = max(-1.0, min(1.0, ((fy * 2.0) - 1.0) * sensitivity))
+                        targets.append((nx, ny))
 
         screen.fill((0, 0, 0))
+        idle_mode = len(targets) == 0
+        active_crowd = len(targets) if not idle_mode else 1 + sum(1 for p in pairs[1:] if p.openness > 0.2)
 
-        draw_eye(left_eye_center, current_x, current_y, True, blink_val, squint_amount, pupil_scale)
-        draw_eye(right_eye_center, current_x, current_y, False, blink_val, squint_amount, pupil_scale)
+        for i, pair in enumerate(pairs):
+            assigned = targets[i] if i < len(targets) else None
+            pair.update(now, assigned, active_crowd, idle_mode)
 
         pygame.display.flip()
         clock.tick(60)
