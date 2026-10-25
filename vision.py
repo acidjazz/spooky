@@ -12,11 +12,22 @@ MODEL_PATH = os.path.join(tempfile.gettempdir(), "efficientdet_lite2.tflite")
 
 
 class VisionTracker:
-    def __init__(self, max_targets=5, mirror_x=False, solo_test=False, sensitivity=1.4, y_offset=0.22, min_score=0.40, port=8080):
+    def __init__(
+        self,
+        max_targets=5,
+        mirror_x=False,
+        solo_test=False,
+        sensitivity=2.1,
+        x_offset=-0.08,
+        y_offset=0.30,
+        min_score=0.40,
+        port=8080,
+    ):
         self.max_targets = max_targets
         self.mirror_x = mirror_x
         self.solo_test = solo_test
         self.sensitivity = sensitivity
+        self.x_offset = x_offset
         self.y_offset = y_offset
         self.min_score = min_score
         self.port = port
@@ -177,7 +188,8 @@ class VisionTracker:
                         2,
                     )
 
-                    raw_x = (1.0 - (fx * 2.0)) if self.mirror_x else ((fx * 2.0) - 1.0)
+                    adj_x = fx + self.x_offset
+                    raw_x = (1.0 - (adj_x * 2.0)) if self.mirror_x else ((adj_x * 2.0) - 1.0)
                     raw_y = ((fy + self.y_offset) * 2.0) - 1.0
                     nx = max(-1.0, min(1.0, raw_x * self.sensitivity))
                     ny = max(-1.0, min(1.0, raw_y * self.sensitivity))

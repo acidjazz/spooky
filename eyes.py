@@ -6,8 +6,10 @@ from vision import VisionTracker
 
 MIRROR_X = False
 SOLO_CROWD_TEST = False
-SENSITIVITY = 1.4
-Y_OFFSET = 0.22
+SENSITIVITY = 2.1
+X_OFFSET = -0.08
+Y_OFFSET = 0.30
+MIN_SCORE = 0.40
 STREAM_PORT = 8080
 
 SLOT_CONFIGS = [
@@ -28,7 +30,9 @@ vision = VisionTracker(
     mirror_x=MIRROR_X,
     solo_test=SOLO_CROWD_TEST,
     sensitivity=SENSITIVITY,
+    x_offset=X_OFFSET,
     y_offset=Y_OFFSET,
+    min_score=MIN_SCORE,
     port=STREAM_PORT,
 )
 
