@@ -25,10 +25,9 @@ proc = start_eyes()
 last_hash = git("rev-parse", "HEAD")
 
 while True:
-    time.sleep(10)
+    time.sleep(30)
     try:
-        git("fetch", "origin", "main")
-        remote_hash = git("rev-parse", "origin/main")
+        remote_hash = git("ls-remote", "origin", "-h", "refs/heads/main").split()[0]
         if remote_hash != last_hash:
             if proc.poll() is None:
                 proc.terminate()
