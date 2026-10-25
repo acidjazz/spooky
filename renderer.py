@@ -138,6 +138,18 @@ class EyePair:
 
             pygame.draw.polygon(self.screen, (0, 0, 0), pts)
 
+            u1 = -0.36
+            edge_x1 = (math.sqrt(1.0 - u1 * u1) * c_rad) * (1.0 - self.alert) + ((1.0 - (abs(u1) ** 1.35)) * s_w) * self.alert
+            edge_y1 = u1 * (c_rad * (1.0 - self.alert) + s_h * self.alert)
+            r1 = max(3, int(eye_r * (0.105 - 0.025 * self.alert)))
+            pygame.draw.circle(self.screen, (255, 255, 255), (int(px + edge_x1), int(py + edge_y1)), r1)
+
+            u2 = -0.04
+            edge_x2 = (math.sqrt(1.0 - u2 * u2) * c_rad) * (1.0 - self.alert) + ((1.0 - (abs(u2) ** 1.35)) * s_w) * self.alert
+            edge_y2 = u2 * (c_rad * (1.0 - self.alert) + s_h * self.alert)
+            r2 = max(2, int(eye_r * (0.05 - 0.012 * self.alert)))
+            pygame.draw.circle(self.screen, (255, 255, 255), (int(px + edge_x2 + r2 * 0.5), int(py + edge_y2)), r2)
+
             close_amt = 1.0 - eff_open
             slant_dir = -side
             active_slant = self.slant * (0.45 + 0.70 * self.alert)
