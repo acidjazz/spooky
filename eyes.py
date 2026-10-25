@@ -49,6 +49,8 @@ class EyePair:
         self.curr_y = 0.0
         self.target_x = 0.0
         self.target_y = 0.0
+        self.alert = 0.0
+        self.target_alert = 0.0
         self.openness = 1.0 if idx == 0 else 0.0
         self.target_openness = 1.0 if idx == 0 else 0.0
         self.last_active = time.time() if idx == 0 else 0.0
@@ -62,9 +64,11 @@ class EyePair:
         if assigned_target is not None:
             self.last_active = now
             self.target_openness = 1.0
+            self.target_alert = 1.0
             self.target_x, self.target_y = assigned_target
         elif self.idx == 0:
             self.target_openness = 1.0
+            self.target_alert = 0.0
             if now >= self.next_saccade:
                 if random.random() < 0.25:
                     self.target_x, self.target_y = 0.0, 0.0
@@ -75,6 +79,7 @@ class EyePair:
                     self.target_y = math.sin(ang) * mag * 0.6
                 self.next_saccade = now + random.uniform(0.6, 2.4)
         else:
+            self.target_alert = 0.0
             if idle_mode:
                 if self.target_openness < 0.5 and random.random() < 0.002:
                     self.last_active = now + random.uniform(2.5, 5.0)
@@ -97,6 +102,7 @@ class EyePair:
 
         self.scale += (self.target_scale - self.scale) * 0.1
         self.openness += (self.target_openness - self.openness) * 0.18
+        self.alert += (self.target_alert - self.alert) * 0.15
         self.curr_x += (self.target_x - self.curr_x) * 0.25
         self.curr_y += (self.target_y - self.curr_y) * 0.25
 
@@ -133,9 +139,12 @@ class EyePair:
             for i in range(steps):
                 ratio = i / float(steps - 1)
                 r = int(eye_r * (1.0 - ratio * 0.25))
-                red = int(175 + 80 * ratio)
-                green = int(10 + 25 * ratio)
-                pygame.draw.circle(screen, (red, green, 15), (ex, ey), r)
+                red = int(185 + 70 * ratio)
+                idle_green = 140 + 85 * ratio
+                track_green = 5 + 20 * ratio
+                green = int(idle_green * (1.0 - self.alert) + track_green * self.alert)
+                blue = int(15 * self.alert)
+                pygame.draw.circle(screen, (red, green, blue), (ex, ey), r)
 
             if self.style == "round":
                 p_rad = int(eye_r * 0.42)
@@ -185,6 +194,7 @@ class EyePair:
 
 pairs = [EyePair(i, *cfg) for i, cfg in enumerate(SLOT_CONFIGS)]
 cap = cv2.VideoCapture(0)
+last_cam_retry = time.time()
 sensitivity = 1.65
 clock = pygame.time.Clock()
 
@@ -196,9 +206,15 @@ try:
                 raise KeyboardInterrupt
 
         targets = []
-        if cap.isOpened():
+        if not cap.isOpened():
+            if now - last_cam_retry > 3.0:
+                last_cam_retry = now
+                cap.open(0)
+        else:
             success, image = cap.read()
-            if success and image is not None:
+            if not success or image is None:
+                cap.release()
+            else:
                 img_h, img_w = image.shape[:2]
                 image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
