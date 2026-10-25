@@ -10,6 +10,10 @@ import cv2
 import mediapipe as mp
 import pygame
 
+MIRROR_X = True
+SOLO_CROWD_TEST = False
+SENSITIVITY = 1.4
+
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float32/1/efficientdet_lite2.tflite"
 MODEL_PATH = os.path.join(tempfile.gettempdir(), "efficientdet_lite2.tflite")
 
@@ -195,7 +199,6 @@ class EyePair:
             pygame.draw.circle(screen, (0, 0, 0), (ex, ey), eye_r + ring_thick, ring_thick)
 
 pairs = [EyePair(i, *cfg) for i, cfg in enumerate(SLOT_CONFIGS)]
-sensitivity = 1.4
 latest_targets = []
 running = True
 
@@ -242,9 +245,16 @@ def vision_worker():
                 bbox = det.bounding_box
                 fx = (bbox.origin_x + (bbox.width * 0.5)) / img_w
                 fy = (bbox.origin_y + (bbox.height * 0.22)) / img_h
-                nx = max(-1.0, min(1.0, (1.0 - (fx * 2.0)) * sensitivity))
-                ny = max(-1.0, min(1.0, ((fy * 2.0) - 1.0) * sensitivity))
+                raw_x = (1.0 - (fx * 2.0)) if MIRROR_X else ((fx * 2.0) - 1.0)
+                nx = max(-1.0, min(1.0, raw_x * SENSITIVITY))
+                ny = max(-1.0, min(1.0, ((fy * 2.0) - 1.0) * SENSITIVITY))
                 new_targets.append((nx, ny))
+            if SOLO_CROWD_TEST and len(new_targets) == 1:
+                bx, by = new_targets[0]
+                new_targets.extend([
+                    (max(-1.0, min(1.0, bx - 0.25)), by),
+                    (max(-1.0, min(1.0, bx + 0.25)), by),
+                ])
             latest_targets = new_targets
             last_seen = now
         elif now - last_seen > 0.6:
