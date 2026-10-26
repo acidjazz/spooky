@@ -1,3 +1,4 @@
+import random
 import sys
 import time
 import pygame
@@ -19,6 +20,34 @@ SLOT_CONFIGS = [
     (0.24, 0.70, 0.50, 0.44),
     (0.76, 0.70, 0.52, 0.38),
 ]
+
+DETECTED_LAYOUTS = {
+    1: [
+        (0.50, 0.46, 1.45),
+    ],
+    2: [
+        (0.27, 0.44, 0.84),
+        (0.73, 0.48, 0.84),
+    ],
+    3: [
+        (0.50, 0.64, 0.78),
+        (0.26, 0.28, 0.72),
+        (0.74, 0.28, 0.72),
+    ],
+    4: [
+        (0.27, 0.68, 0.68),
+        (0.26, 0.26, 0.68),
+        (0.74, 0.26, 0.68),
+        (0.73, 0.68, 0.68),
+    ],
+    5: [
+        (0.50, 0.46, 0.85),
+        (0.23, 0.22, 0.58),
+        (0.77, 0.22, 0.58),
+        (0.24, 0.72, 0.56),
+        (0.76, 0.72, 0.56),
+    ],
+}
 
 pygame.init()
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
@@ -50,7 +79,31 @@ try:
 
         screen.fill((0, 0, 0))
         idle_mode = len(targets) == 0
-        active_crowd = len(targets) if not idle_mode else 1 + sum(1 for p in pairs[1:] if p.openness > 0.2)
+
+        if idle_mode:
+            awake_others = [p for p in pairs[1:] if now < p.last_active]
+            if len(awake_others) < 2:
+                sleeping = [p for p in pairs[1:] if now >= p.last_active]
+                sleeping.sort(key=lambda p: p.openness, reverse=True)
+                for p in sleeping[: 2 - len(awake_others)]:
+                    p.last_active = now + random.uniform(6.0, 14.0)
+                    p.target_openness = 1.0
+
+            for i, pair in enumerate(pairs):
+                nx, ny, sc, _ = SLOT_CONFIGS[i]
+                pair.set_layout(nx, ny, sc)
+
+            active_crowd = 1 + sum(1 for p in pairs[1:] if p.openness > 0.2)
+        else:
+            active_crowd = min(len(pairs), len(targets))
+            layout = DETECTED_LAYOUTS.get(active_crowd, DETECTED_LAYOUTS[5])
+            for i, pair in enumerate(pairs):
+                if i < len(layout):
+                    nx, ny, sc = layout[i]
+                    pair.set_layout(nx, ny, sc)
+                else:
+                    nx, ny, sc, _ = SLOT_CONFIGS[i]
+                    pair.set_layout(nx, ny, sc)
 
         for i, pair in enumerate(pairs):
             pair.update(now, assigned_list[i], active_crowd, idle_mode)

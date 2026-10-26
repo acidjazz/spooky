@@ -203,7 +203,7 @@ class VisionTracker:
                     ])
                 self.latest_targets = new_targets
                 last_seen = now
-            elif now - last_seen > 0.6:
+            elif now - last_seen > 1.5:
                 self.latest_targets = []
 
             cx, cy = img_w // 2, img_h // 2

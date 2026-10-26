@@ -11,6 +11,10 @@ class EyePair:
         self.idx = idx
         self.cx = int(self.screen_w * nx)
         self.cy = int(self.screen_h * ny)
+        self.curr_cx = float(self.cx)
+        self.curr_cy = float(self.cy)
+        self.target_cx = float(self.cx)
+        self.target_cy = float(self.cy)
         self.base_scale = scale
         self.scale = scale
         self.target_scale = scale
@@ -21,9 +25,9 @@ class EyePair:
         self.target_y = 0.0
         self.alert = 0.0
         self.target_alert = 0.0
-        self.openness = 1.0 if idx == 0 else 0.0
-        self.target_openness = 1.0 if idx == 0 else 0.0
-        self.last_active = time.time() if idx == 0 else 0.0
+        self.openness = 1.0 if idx < 3 else 0.0
+        self.target_openness = 1.0 if idx < 3 else 0.0
+        self.last_active = (time.time() + random.uniform(6.0, 14.0)) if idx < 3 else 0.0
         self.is_blinking = False
         self.blink_start = 0.0
         self.blink_dur = 0.16
@@ -36,31 +40,40 @@ class EyePair:
         self.glint_r1 = random.uniform(0.09, 0.115)
         self.glint_r2 = random.uniform(0.045, 0.062)
 
+    def set_layout(self, nx, ny, scale):
+        self.target_cx = self.screen_w * nx
+        self.target_cy = self.screen_h * ny
+        self.target_scale = scale
+
     def update(self, now, assigned_target, crowd_count, idle_mode):
-        if assigned_target is not None:
-            self.last_active = now
-            self.target_openness = 1.0
-            self.target_alert = 1.0
-            self.target_x, self.target_y = assigned_target
-        elif self.idx == 0:
-            self.target_openness = 1.0
-            self.target_alert = 0.0
-            if now >= self.next_saccade:
-                if random.random() < 0.25:
-                    self.target_x, self.target_y = 0.0, 0.0
-                else:
-                    ang = random.uniform(0, math.tau)
-                    mag = random.uniform(0.3, 0.95)
-                    self.target_x = math.cos(ang) * mag
-                    self.target_y = math.sin(ang) * mag * 0.6
-                self.next_saccade = now + random.uniform(0.6, 2.4)
+        if not idle_mode:
+            if assigned_target is not None:
+                self.last_active = now
+                self.target_openness = 1.0
+                self.target_alert = 1.0
+                self.target_x, self.target_y = assigned_target
+            else:
+                self.target_openness = 0.0
+                self.target_alert = 0.0
         else:
             self.target_alert = 0.0
-            if idle_mode:
+            if self.idx == 0:
+                self.target_openness = 1.0
+                if now >= self.next_saccade:
+                    if random.random() < 0.25:
+                        self.target_x, self.target_y = 0.0, 0.0
+                    else:
+                        ang = random.uniform(0, math.tau)
+                        mag = random.uniform(0.3, 0.95)
+                        self.target_x = math.cos(ang) * mag
+                        self.target_y = math.sin(ang) * mag * 0.6
+                    self.next_saccade = now + random.uniform(0.6, 2.4)
+            else:
                 if self.target_openness < 0.5 and random.random() < 0.002:
-                    self.last_active = now + random.uniform(2.5, 5.0)
+                    self.last_active = now + random.uniform(5.0, 12.0)
                     self.target_openness = 1.0
                 if now < self.last_active:
+                    self.target_openness = 1.0
                     if now >= self.next_saccade:
                         ang = random.uniform(0, math.tau)
                         mag = random.uniform(0.2, 0.9)
@@ -69,13 +82,11 @@ class EyePair:
                         self.next_saccade = now + random.uniform(0.5, 1.8)
                 else:
                     self.target_openness = 0.0
-            else:
-                if now - self.last_active > 1.2:
-                    self.target_openness = 0.0
 
-        if self.idx == 0:
-            self.target_scale = 1.15 if crowd_count <= 1 else 0.88
-
+        self.curr_cx += (self.target_cx - self.curr_cx) * 0.1
+        self.curr_cy += (self.target_cy - self.curr_cy) * 0.1
+        self.cx = int(self.curr_cx)
+        self.cy = int(self.curr_cy)
         self.scale += (self.target_scale - self.scale) * 0.1
         self.openness += (self.target_openness - self.openness) * 0.18
         self.alert += (self.target_alert - self.alert) * 0.14
