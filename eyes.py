@@ -6,7 +6,7 @@ from vision import VisionTracker
 
 MIRROR_X = False
 SOLO_CROWD_TEST = False
-SENSITIVITY = 2.1
+SENSITIVITY = 1.15
 X_OFFSET = -0.09
 Y_OFFSET = 0.30
 MIN_SCORE = 0.25
