@@ -17,8 +17,8 @@ class VisionTracker:
         max_targets=5,
         mirror_x=False,
         solo_test=False,
-        sensitivity=2.1,
-        x_offset=-0.08,
+        sensitivity=0.90,
+        x_offset=-0.09,
         y_offset=0.30,
         min_score=0.25,
         port=8080,
@@ -133,7 +133,10 @@ class VisionTracker:
     def _vision_worker(self):
         cap = self._open_camera()
         last_retry = time.time()
-        last_seen = 0.0
+        slot_first_seen = [0.0] * self.max_targets
+        slot_last_seen = [0.0] * self.max_targets
+        slot_confirmed_until = [0.0] * self.max_targets
+        slot_pos = [(0.0, 0.0)] * self.max_targets
 
         while self.running:
             now = time.time()
@@ -160,17 +163,22 @@ class VisionTracker:
                 if d.categories and d.categories[0].score >= self.min_score
             ]
 
+            raw_targets = []
             if valid_dets:
                 sorted_dets = sorted(
                     valid_dets,
                     key=lambda d: d.bounding_box.width * d.bounding_box.height,
                     reverse=True,
                 )
-                new_targets = []
-                for det in sorted_dets[: self.max_targets]:
+                accepted_fx = []
+                for det in sorted_dets:
                     bbox = det.bounding_box
-                    score_pct = int(round(det.categories[0].score * 100))
                     fx = (bbox.origin_x + (bbox.width * 0.5)) / img_w
+                    if any(abs(fx - afx) < 0.14 for afx in accepted_fx):
+                        continue
+                    accepted_fx.append(fx)
+
+                    score_pct = int(round(det.categories[0].score * 100))
                     fy = (bbox.origin_y + (bbox.height * 0.22)) / img_h
 
                     dx1 = int((1.0 - (bbox.origin_x + bbox.width) / img_w) * img_w)
@@ -193,18 +201,36 @@ class VisionTracker:
                     raw_y = ((fy + self.y_offset) * 2.0) - 1.0
                     nx = max(-1.0, min(1.0, raw_x * self.sensitivity))
                     ny = max(-1.0, min(1.0, raw_y * self.sensitivity))
-                    new_targets.append((nx, ny))
+                    raw_targets.append((nx, ny))
 
-                if self.solo_test and len(new_targets) == 1:
-                    bx, by = new_targets[0]
-                    new_targets.extend([
+                    if len(raw_targets) >= self.max_targets:
+                        break
+
+                if self.solo_test and len(raw_targets) == 1:
+                    bx, by = raw_targets[0]
+                    raw_targets.extend([
                         (max(-1.0, min(1.0, bx - 0.25)), by),
                         (max(-1.0, min(1.0, bx + 0.25)), by),
                     ])
-                self.latest_targets = new_targets
-                last_seen = now
-            elif now - last_seen > 1.5:
-                self.latest_targets = []
+
+            active_targets = []
+            for i in range(self.max_targets):
+                if i < len(raw_targets):
+                    if slot_first_seen[i] == 0.0:
+                        slot_first_seen[i] = now
+                    slot_last_seen[i] = now
+                    slot_pos[i] = raw_targets[i]
+                    req_delay = 0.0 if i == 0 else 0.45
+                    if (now - slot_first_seen[i]) >= req_delay:
+                        slot_confirmed_until[i] = now + 1.5
+                else:
+                    if (now - slot_last_seen[i]) > 0.25:
+                        slot_first_seen[i] = 0.0
+
+                if now < slot_confirmed_until[i]:
+                    active_targets.append(slot_pos[i])
+
+            self.latest_targets = active_targets
 
             cx, cy = img_w // 2, img_h // 2
             cv2.circle(debug_frame, (cx, cy), 45, (80, 80, 80), 2)
