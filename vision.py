@@ -73,18 +73,6 @@ class VisionTracker:
                 return
 
             def do_GET(self):
-                if self.path == "/down":
-                    tracker.min_score = round(max(0.20, tracker.min_score - 0.05), 2)
-                    self.send_response(302)
-                    self.send_header("Location", "/")
-                    self.end_headers()
-                    return
-                if self.path == "/up":
-                    tracker.min_score = round(min(0.85, tracker.min_score + 0.05), 2)
-                    self.send_response(302)
-                    self.send_header("Location", "/")
-                    self.end_headers()
-                    return
                 if self.path == "/stream":
                     self.send_response(200)
                     self.send_header("Age", "0")
@@ -105,18 +93,13 @@ class VisionTracker:
                     except Exception:
                         pass
                 else:
-                    pct = int(round(tracker.min_score * 100))
                     html = (
-                        f"<html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'>"
-                        f"<title>SpookySpy Aim</title></head>"
-                        f"<body style='margin:0;background:black;color:red;font-family:sans-serif;text-align:center;'>"
-                        f"<h3 style='margin:10px;'>SpookySpy Live Aiming View</h3>"
-                        f"<img src='/stream' style='width:100%;max-width:960px;border:2px solid red;'/>"
-                        f"<div style='margin:14px;color:white;font-size:16px;'>"
-                        f"<div style='margin-bottom:8px;'>AI Confidence Cutoff: <b>{pct}%</b></div>"
-                        f"<a href='/down' style='color:white;background:darkred;padding:10px 16px;text-decoration:none;border-radius:6px;margin:6px;display:inline-block;'>-5% (More Sensitive)</a>"
-                        f"<a href='/up' style='color:white;background:darkred;padding:10px 16px;text-decoration:none;border-radius:6px;margin:6px;display:inline-block;'>+5% (Ignore Trees)</a>"
-                        f"</div></body></html>"
+                        "<html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'>"
+                        "<title>SpookySpy Aim</title></head>"
+                        "<body style='margin:0;background:black;color:red;font-family:sans-serif;text-align:center;'>"
+                        "<h3 style='margin:10px;'>SpookySpy Live Aiming View</h3>"
+                        "<img src='/stream' style='width:100%;max-width:960px;border:2px solid red;'/>"
+                        "</body></html>"
                     ).encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html")
