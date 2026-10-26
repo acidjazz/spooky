@@ -112,27 +112,47 @@ class EyePair:
 
     def draw(self, eff_open, now):
         eye_r = int(self.screen_h * 0.19 * self.scale)
+        if eye_r < 4:
+            return
         spacing = int(eye_r * 1.35)
         max_shift_x = eye_r * 0.48
         max_shift_y = eye_r * 0.32
         bob_y = int(math.sin(now * 2.2 + self.breath_phase) * (eye_r * 0.05))
 
+        pad = 16
+        half = eye_r + pad
+        dim = half * 2
+        key_color = (1, 1, 1)
+
+        outer_clip = [(0, 0), (dim, 0), (dim, dim), (0, dim), (0, 0)]
+        ring_verts = 144
+        for k in range(ring_verts + 1):
+            ang = (k / float(ring_verts)) * math.tau
+            outer_clip.append((
+                int(half + math.cos(ang) * eye_r),
+                int(half + math.sin(ang) * eye_r),
+            ))
+
         for side in (-1, 1):
-            ex = self.cx + (side * spacing)
-            ey = self.cy + bob_y
+            surf = pygame.Surface((dim, dim))
+            surf.fill(key_color)
+            surf.set_colorkey(key_color)
+
+            ex = half
+            ey = half
             px = ex + self.curr_x * max_shift_x
             py = ey + self.curr_y * max_shift_y
 
-            steps = 10
+            steps = 24
             for i in range(steps):
                 ratio = i / float(steps - 1)
                 r = int(eye_r * (1.0 - ratio * 0.25))
                 red = int(165 + 90 * ratio)
                 green = int(5 + 18 * ratio)
-                pygame.draw.circle(self.screen, (red, green, 12), (ex, ey), r)
+                pygame.draw.circle(surf, (red, green, 12), (ex, ey), r)
 
             pts = []
-            num_verts = 32
+            num_verts = 160
             c_rad = eye_r * 0.42
             s_w = eye_r * 0.13
             s_h = eye_r * 0.82
@@ -152,7 +172,7 @@ class EyePair:
                 vy = py + (ch * (1.0 - self.alert) + sh * self.alert)
                 pts.append((int(vx), int(vy)))
 
-            pygame.draw.polygon(self.screen, (0, 0, 0), pts)
+            pygame.draw.polygon(surf, (0, 0, 0), pts)
 
             for u_base, r_fac in ((self.glint_u1, self.glint_r1), (self.glint_u2, self.glint_r2)):
                 dy = u_base * c_rad * (1.0 - 0.40 * self.alert)
@@ -163,7 +183,7 @@ class EyePair:
                 dot_r = max(3, int(eye_r * r_fac * (1.0 - 0.22 * self.alert)))
                 gx = int(px + self.glint_side * edge_x)
                 gy = int(py + dy)
-                pygame.draw.circle(self.screen, (255, 255, 255), (gx, gy), dot_r)
+                pygame.draw.circle(surf, (255, 255, 255), (gx, gy), dot_r)
 
             close_amt = 1.0 - eff_open
             slant_dir = -side
@@ -174,27 +194,29 @@ class EyePair:
             curr_top = base_top + int(eye_r * 1.15 * close_amt)
 
             upper_mask = [
-                (ex - eye_r - 15, ey - eye_r - 15),
-                (ex + eye_r + 15, ey - eye_r - 15),
-                (ex + eye_r + 15, int(curr_top + tilt)),
-                (ex - eye_r - 15, int(curr_top - tilt)),
+                (0, 0),
+                (dim, 0),
+                (dim, int(curr_top + tilt)),
+                (0, int(curr_top - tilt)),
             ]
-            pygame.draw.polygon(self.screen, (0, 0, 0), upper_mask)
+            pygame.draw.polygon(surf, key_color, upper_mask)
 
             base_bot = ey + int(eye_r * 0.72)
             curr_bot = base_bot - int(eye_r * 0.85 * close_amt)
             bot_tilt = -tilt * 0.35
 
             lower_mask = [
-                (ex - eye_r - 15, ey + eye_r + 15),
-                (ex + eye_r + 15, ey + eye_r + 15),
-                (ex + eye_r + 15, int(curr_bot + bot_tilt)),
-                (ex - eye_r - 15, int(curr_bot - bot_tilt)),
+                (0, dim),
+                (dim, dim),
+                (dim, int(curr_bot + bot_tilt)),
+                (0, int(curr_bot - bot_tilt)),
             ]
-            pygame.draw.polygon(self.screen, (0, 0, 0), lower_mask)
+            pygame.draw.polygon(surf, key_color, lower_mask)
+            pygame.draw.polygon(surf, key_color, outer_clip)
 
-            ring_thick = max(20, int(eye_r * 0.35))
-            pygame.draw.circle(self.screen, (0, 0, 0), (ex, ey), eye_r + ring_thick, ring_thick)
+            screen_ex = self.cx + (side * spacing)
+            screen_ey = self.cy + bob_y
+            self.screen.blit(surf, (screen_ex - half, screen_ey - half))
 
 
 def match_sticky_targets(eye_pairs, raw_targets):

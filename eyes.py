@@ -1,9 +1,17 @@
+import ctypes
+import os
 import random
 import sys
 import time
 import pygame
 from renderer import EyePair, match_sticky_targets
 from vision import VisionTracker
+
+if os.name == "nt":
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
 
 MIRROR_X = False
 SOLO_CROWD_TEST = False
@@ -14,11 +22,11 @@ MIN_SCORE = 0.25
 STREAM_PORT = 8080
 
 SLOT_CONFIGS = [
-    (0.50, 0.44, 1.05, 0.40),
-    (0.23, 0.22, 0.52, 0.42),
-    (0.77, 0.22, 0.54, 0.36),
-    (0.24, 0.70, 0.50, 0.44),
-    (0.76, 0.70, 0.52, 0.38),
+    (0.50, 0.45, 1.00, 0.40),
+    (0.20, 0.18, 0.48, 0.42),
+    (0.80, 0.18, 0.50, 0.36),
+    (0.20, 0.77, 0.48, 0.44),
+    (0.80, 0.77, 0.50, 0.38),
 ]
 
 DETECTED_LAYOUTS = {
@@ -42,15 +50,15 @@ DETECTED_LAYOUTS = {
     ],
     5: [
         (0.50, 0.46, 0.85),
-        (0.23, 0.22, 0.58),
-        (0.77, 0.22, 0.58),
-        (0.24, 0.72, 0.56),
-        (0.76, 0.72, 0.56),
+        (0.20, 0.18, 0.54),
+        (0.80, 0.18, 0.54),
+        (0.20, 0.77, 0.52),
+        (0.80, 0.77, 0.52),
     ],
 }
 
 pygame.init()
-screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF)
 pygame.mouse.set_visible(False)
 
 pairs = [EyePair(screen, i, *cfg) for i, cfg in enumerate(SLOT_CONFIGS)]
@@ -105,8 +113,9 @@ try:
                     nx, ny, sc, _ = SLOT_CONFIGS[i]
                     pair.set_layout(nx, ny, sc)
 
-        for i, pair in enumerate(pairs):
-            pair.update(now, assigned_list[i], active_crowd, idle_mode)
+        draw_order = sorted(range(len(pairs)), key=lambda idx: pairs[idx].scale)
+        for i in draw_order:
+            pairs[i].update(now, assigned_list[i], active_crowd, idle_mode)
 
         pygame.display.flip()
         clock.tick(60)
