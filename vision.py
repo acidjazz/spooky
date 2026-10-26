@@ -20,7 +20,7 @@ class VisionTracker:
         sensitivity=2.1,
         x_offset=-0.08,
         y_offset=0.30,
-        min_score=0.40,
+        min_score=0.25,
         port=8080,
     ):
         self.max_targets = max_targets

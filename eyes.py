@@ -7,9 +7,9 @@ from vision import VisionTracker
 MIRROR_X = False
 SOLO_CROWD_TEST = False
 SENSITIVITY = 2.1
-X_OFFSET = 0.02
+X_OFFSET = -0.09
 Y_OFFSET = 0.30
-MIN_SCORE = 0.40
+MIN_SCORE = 0.25
 STREAM_PORT = 8080
 
 SLOT_CONFIGS = [
