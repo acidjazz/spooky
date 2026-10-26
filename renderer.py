@@ -124,9 +124,9 @@ class EyePair:
         dim = half * 2
         key_color = (1, 1, 1)
 
-        outer_clip = [(0, 0), (dim, 0), (dim, dim), (0, dim), (0, 0)]
+        outer_clip = [(dim, half), (dim, dim), (0, dim), (0, 0), (dim, 0), (dim, half)]
         ring_verts = 144
-        for k in range(ring_verts + 1):
+        for k in range(ring_verts, -1, -1):
             ang = (k / float(ring_verts)) * math.tau
             outer_clip.append((
                 int(half + math.cos(ang) * eye_r),
@@ -194,8 +194,8 @@ class EyePair:
             curr_top = base_top + int(eye_r * 1.15 * close_amt)
 
             upper_mask = [
-                (0, 0),
-                (dim, 0),
+                (0, -dim),
+                (dim, -dim),
                 (dim, int(curr_top + tilt)),
                 (0, int(curr_top - tilt)),
             ]
@@ -206,8 +206,8 @@ class EyePair:
             bot_tilt = -tilt * 0.35
 
             lower_mask = [
-                (0, dim),
-                (dim, dim),
+                (0, dim * 2),
+                (dim, dim * 2),
                 (dim, int(curr_bot + bot_tilt)),
                 (0, int(curr_bot - bot_tilt)),
             ]
