@@ -19,7 +19,7 @@ class VisionTracker:
         sensitivity=0.90,
         x_offset=-0.09,
         y_offset=0.30,
-        min_score=0.20,
+        min_score=0.28,
         port=8080,
     ):
         self.max_targets = max_targets
@@ -28,7 +28,7 @@ class VisionTracker:
         self.sensitivity = sensitivity
         self.x_offset = x_offset
         self.y_offset = y_offset
-        self.min_score = min_score
+        self.min_score = max(min_score, 0.28)
         self.port = port
         self.latest_targets = []
         self.latest_jpeg = None
@@ -145,7 +145,7 @@ class VisionTracker:
             results = self.model.predict(
                 source=enhanced_bgr,
                 classes=[0],
-                conf=0.15,
+                conf=self.min_score,
                 imgsz=640,
                 verbose=False,
             )
@@ -156,9 +156,16 @@ class VisionTracker:
                 boxes = results[0].boxes
                 for i in range(len(boxes)):
                     score = float(boxes.conf[i].item())
-                    if score >= min(self.min_score, 0.20):
-                        x1, y1, x2, y2 = boxes.xyxy[i].tolist()
-                        valid_dets.append((x1, y1, x2 - x1, y2 - y1, score))
+                    if score < self.min_score:
+                        continue
+                    x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+                    bw = x2 - x1
+                    bh = y2 - y1
+                    if (bh / img_h) < 0.09:
+                        continue
+                    if (y2 / img_h) < 0.36:
+                        continue
+                    valid_dets.append((x1, y1, bw, bh, score))
 
             raw_targets = []
             if valid_dets:
