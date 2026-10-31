@@ -6,6 +6,7 @@ import time
 import urllib.request
 import cv2
 import mediapipe as mp
+import numpy as np
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float32/1/efficientdet_lite2.tflite"
 MODEL_PATH = os.path.join(tempfile.gettempdir(), "efficientdet_lite2.tflite")
@@ -20,7 +21,7 @@ class VisionTracker:
         sensitivity=0.90,
         x_offset=-0.09,
         y_offset=0.30,
-        min_score=0.25,
+        min_score=0.18,
         port=8080,
     ):
         self.max_targets = max_targets
@@ -35,13 +36,19 @@ class VisionTracker:
         self.latest_jpeg = None
         self.running = True
 
+        self.clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        inv_gamma = 1.0 / 1.65
+        self.gamma_lut = np.array(
+            [((i / 255.0) ** inv_gamma) * 255 for i in range(256)]
+        ).astype("uint8")
+
         if not os.path.exists(MODEL_PATH):
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
         base_options = mp.tasks.BaseOptions(model_asset_path=MODEL_PATH)
         options = mp.tasks.vision.ObjectDetectorOptions(
             base_options=base_options,
-            score_threshold=0.20,
+            score_threshold=0.15,
             category_allowlist=["person"],
         )
         self.detector = mp.tasks.vision.ObjectDetector.create_from_options(options)
@@ -63,7 +70,17 @@ class VisionTracker:
         if c.isOpened():
             c.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
             c.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            c.set(cv2.CAP_PROP_GAIN, 255)
+            c.set(cv2.CAP_PROP_BRIGHTNESS, 150)
         return c
+
+    def _enhance_night(self, bgr_frame):
+        lab = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        l_clahe = self.clahe.apply(l)
+        l_boosted = cv2.LUT(l_clahe, self.gamma_lut)
+        merged = cv2.merge((l_boosted, a, b))
+        return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
 
     def _start_server(self):
         tracker = self
@@ -136,11 +153,12 @@ class VisionTracker:
                 continue
 
             img_h, img_w = image.shape[:2]
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            enhanced_bgr = self._enhance_night(image)
+            image_rgb = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
             results = self.detector.detect(mp_image)
 
-            debug_frame = cv2.flip(image, 1)
+            debug_frame = cv2.flip(enhanced_bgr, 1)
             valid_dets = [
                 d for d in (results.detections or [])
                 if d.categories and d.categories[0].score >= self.min_score
