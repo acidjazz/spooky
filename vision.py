@@ -3,13 +3,11 @@ import os
 import tempfile
 import threading
 import time
-import urllib.request
 import cv2
-import mediapipe as mp
 import numpy as np
+from ultralytics import YOLO
 
-MODEL_URL = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float32/1/efficientdet_lite2.tflite"
-MODEL_PATH = os.path.join(tempfile.gettempdir(), "efficientdet_lite2.tflite")
+MODEL_PATH = os.path.join(tempfile.gettempdir(), "yolov8s.pt")
 
 
 class VisionTracker:
@@ -21,7 +19,7 @@ class VisionTracker:
         sensitivity=0.90,
         x_offset=-0.09,
         y_offset=0.30,
-        min_score=0.18,
+        min_score=0.20,
         port=8080,
     ):
         self.max_targets = max_targets
@@ -36,22 +34,13 @@ class VisionTracker:
         self.latest_jpeg = None
         self.running = True
 
-        self.clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        inv_gamma = 1.0 / 1.65
+        self.clahe = cv2.createCLAHE(clipLimit=1.8, tileGridSize=(8, 8))
+        inv_gamma = 1.0 / 1.35
         self.gamma_lut = np.array(
             [((i / 255.0) ** inv_gamma) * 255 for i in range(256)]
         ).astype("uint8")
 
-        if not os.path.exists(MODEL_PATH):
-            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-
-        base_options = mp.tasks.BaseOptions(model_asset_path=MODEL_PATH)
-        options = mp.tasks.vision.ObjectDetectorOptions(
-            base_options=base_options,
-            score_threshold=0.15,
-            category_allowlist=["person"],
-        )
-        self.detector = mp.tasks.vision.ObjectDetector.create_from_options(options)
+        self.model = YOLO(MODEL_PATH)
 
         threading.Thread(target=self._start_server, daemon=True).start()
         self.worker = threading.Thread(target=self._vision_worker, daemon=True)
@@ -63,19 +52,17 @@ class VisionTracker:
     def stop(self):
         self.running = False
         self.worker.join(timeout=1.0)
-        self.detector.close()
 
     def _open_camera(self):
         c = cv2.VideoCapture(0)
         if c.isOpened():
             c.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
             c.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-            c.set(cv2.CAP_PROP_GAIN, 255)
-            c.set(cv2.CAP_PROP_BRIGHTNESS, 150)
         return c
 
     def _enhance_night(self, bgr_frame):
-        lab = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2LAB)
+        denoised = cv2.bilateralFilter(bgr_frame, 5, 35, 35)
+        lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         l_clahe = self.clahe.apply(l)
         l_boosted = cv2.LUT(l_clahe, self.gamma_lut)
@@ -154,37 +141,45 @@ class VisionTracker:
 
             img_h, img_w = image.shape[:2]
             enhanced_bgr = self._enhance_night(image)
-            image_rgb = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
-            results = self.detector.detect(mp_image)
+
+            results = self.model.predict(
+                source=enhanced_bgr,
+                classes=[0],
+                conf=0.15,
+                imgsz=640,
+                verbose=False,
+            )
 
             debug_frame = cv2.flip(enhanced_bgr, 1)
-            valid_dets = [
-                d for d in (results.detections or [])
-                if d.categories and d.categories[0].score >= self.min_score
-            ]
+            valid_dets = []
+            if results and len(results) > 0 and results[0].boxes is not None:
+                boxes = results[0].boxes
+                for i in range(len(boxes)):
+                    score = float(boxes.conf[i].item())
+                    if score >= min(self.min_score, 0.20):
+                        x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+                        valid_dets.append((x1, y1, x2 - x1, y2 - y1, score))
 
             raw_targets = []
             if valid_dets:
                 sorted_dets = sorted(
                     valid_dets,
-                    key=lambda d: d.bounding_box.width * d.bounding_box.height,
+                    key=lambda d: d[2] * d[3],
                     reverse=True,
                 )
                 accepted_fx = []
-                for det in sorted_dets:
-                    bbox = det.bounding_box
-                    fx = (bbox.origin_x + (bbox.width * 0.5)) / img_w
-                    if any(abs(fx - afx) < 0.14 for afx in accepted_fx):
+                for ox, oy, bw, bh, score in sorted_dets:
+                    fx = (ox + (bw * 0.5)) / img_w
+                    if any(abs(fx - afx) < 0.06 for afx in accepted_fx):
                         continue
                     accepted_fx.append(fx)
 
-                    score_pct = int(round(det.categories[0].score * 100))
-                    fy = (bbox.origin_y + (bbox.height * 0.22)) / img_h
+                    score_pct = int(round(score * 100))
+                    fy = (oy + (bh * 0.22)) / img_h
 
-                    dx1 = int((1.0 - (bbox.origin_x + bbox.width) / img_w) * img_w)
-                    dx2 = int((1.0 - bbox.origin_x / img_w) * img_w)
-                    dy1, dy2 = int(bbox.origin_y), int(bbox.origin_y + bbox.height)
+                    dx1 = int((1.0 - (ox + bw) / img_w) * img_w)
+                    dx2 = int((1.0 - ox / img_w) * img_w)
+                    dy1, dy2 = int(oy), int(oy + bh)
                     cv2.rectangle(debug_frame, (dx1, dy1), (dx2, dy2), (0, 0, 255), 3)
                     cv2.circle(debug_frame, (int((1.0 - fx) * img_w), int(fy * img_h)), 8, (0, 255, 0), -1)
                     cv2.putText(
@@ -221,11 +216,11 @@ class VisionTracker:
                         slot_first_seen[i] = now
                     slot_last_seen[i] = now
                     slot_pos[i] = raw_targets[i]
-                    req_delay = 0.0 if i == 0 else 0.45
+                    req_delay = 0.0 if i == 0 else 0.10
                     if (now - slot_first_seen[i]) >= req_delay:
-                        slot_confirmed_until[i] = now + 1.5
+                        slot_confirmed_until[i] = now + 1.8
                 else:
-                    if (now - slot_last_seen[i]) > 0.25:
+                    if (now - slot_last_seen[i]) > 0.40:
                         slot_first_seen[i] = 0.0
 
                 if now < slot_confirmed_until[i]:
